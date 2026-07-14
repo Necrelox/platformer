@@ -1,2 +1,5 @@
-
 build/
+dist/
+vcpkg_installed/
+*.tar.gz
+*.zip

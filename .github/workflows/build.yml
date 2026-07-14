@@ -1,7 +1,7 @@
 name: build
 on:
   push:
-    branches: [master]
+    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -15,24 +15,35 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cache vcpkg archives
+      - name: Cache vcpkg
         uses: actions/cache@v4
         with:
           path: |
             ~/.cache/vcpkg/archives
-            C:\Users\runneradmin\AppData\Local\vcpkg\archives
+            ~/AppData/Local/vcpkg/archives
           key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
           restore-keys: |
             vcpkg-${{ runner.os }}-
 
-      - name: Install Ninja (Linux)
+      - name: Setup vcpkg (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y ninja-build
+        run: |
+          git clone --depth 1 https://github.com/microsoft/vcpkg.git "$HOME/vcpkg"
+          "$HOME/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+          echo "VCPKG_ROOT=$HOME/vcpkg" >> "$GITHUB_ENV"
+
+      - name: Setup vcpkg (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          git clone --depth 1 https://github.com/microsoft/vcpkg.git "$env:USERPROFILE\vcpkg"
+          & "$env:USERPROFILE\vcpkg\bootstrap-vcpkg.bat" -disableMetrics
+          echo "VCPKG_ROOT=$env:USERPROFILE\vcpkg" >> $env:GITHUB_ENV
 
       - name: Configure (Linux)
         if: runner.os == 'Linux'
         run: |
-          cmake -B build -G Ninja \
+          cmake -B build \
             -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake \
             -DCMAKE_BUILD_TYPE=Release
 
@@ -46,7 +57,7 @@ jobs:
 
       - name: Build (Linux)
         if: runner.os == 'Linux'
-        run: cmake --build build
+        run: cmake --build build -j
 
       - name: Build (Windows)
         if: runner.os == 'Windows'

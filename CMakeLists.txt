@@ -1,7 +1,13 @@
 cmake_minimum_required(VERSION 3.20)
 project(platformer CXX)
 
-set(CMAKE_CXX_STANDARD 26)
+# ponytail: MSVC + CMake 4.3 can't map CXX26 yet; fall back to 23 on Windows.
+# plan.md anticipated this — bump back to 26 when MSVC ships a /std:c++26 flag.
+if(MSVC)
+  set(CMAKE_CXX_STANDARD 23)
+else()
+  set(CMAKE_CXX_STANDARD 26)
+endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(raylib REQUIRED)   # system raylib 6.0 is installed; no FetchContent needed

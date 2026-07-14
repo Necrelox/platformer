@@ -1,0 +1,75 @@
+name: build
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache vcpkg archives
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/vcpkg/archives
+            C:\Users\runneradmin\AppData\Local\vcpkg\archives
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-
+
+      - name: Install Ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Configure (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cmake -B build -A x64 `
+            -DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: cmake --build build
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: cmake --build build --config Release
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p dist
+          cp build/platformer dist/
+          [ -d assets ] && cp -r assets dist/ || true
+          tar -czf platformer-linux-x64.tar.gz -C dist .
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item build/Release/platformer.exe dist/
+          if (Test-Path assets) { Copy-Item assets dist/ -Recurse }
+          Compress-Archive -Path dist/* -DestinationPath platformer-windows-x64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: platformer-${{ runner.os == 'Windows' && 'windows' || 'linux' }}-x64
+          path: ${{ runner.os == 'Windows' && 'platformer-windows-x64.zip' || 'platformer-linux-x64.tar.gz' }}

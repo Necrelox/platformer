@@ -95,6 +95,10 @@ int main() {
 
         bool decoded = false;
         for (int i = 0; i < 40 && !decoded; ++i) {
+            // enet_host_broadcast only QUEUES the packet — it isn't put on the wire until the
+            // sending host's own enet_host_service runs, so the host side must be polled too
+            // (the real game always does this every frame regardless of role).
+            net::poll(gHostGame);
             net::poll(gClientGame);
             net::sync_client(gClientGame, 1.0f); // dt=1s -> ease clamps to 1 (snap fully in one call)
             decoded = cw.players.size() == 1 && std::fabs(cw.players[0].pos.x - 100.f) < 1.0f;

@@ -255,7 +255,6 @@ void poll(Game& g) {
     if (!active) return;
     ENetEvent ev;
     while (enet_host_service(active, &ev, 0) > 0) {
-        fprintf(stderr, "DEBUG poll role=%d evtype=%d\n", (int)g.net.role, (int)ev.type);
         switch (ev.type) {
             case ENET_EVENT_TYPE_CONNECT:
                 if (g.net.role == NetRole::Host) handle_host_connect(g, ev.peer);

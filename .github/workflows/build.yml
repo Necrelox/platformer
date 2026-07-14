@@ -6,7 +6,11 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
 
     steps:
       - uses: actions/checkout@v4
@@ -14,19 +18,37 @@ jobs:
       - name: Cache vcpkg
         uses: actions/cache@v4
         with:
-          path: ~/AppData/Local/vcpkg/archives
-          key: vcpkg-windows-${{ hashFiles('vcpkg.json') }}
+          path: |
+            ~/.cache/vcpkg/archives
+            ~/AppData/Local/vcpkg/archives
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
           restore-keys: |
-            vcpkg-windows-
+            vcpkg-${{ runner.os }}-
 
-      - name: Setup vcpkg
+      - name: Setup vcpkg (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          git clone --depth 1 https://github.com/microsoft/vcpkg.git "$HOME/vcpkg"
+          "$HOME/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+          echo "VCPKG_ROOT=$HOME/vcpkg" >> "$GITHUB_ENV"
+
+      - name: Setup vcpkg (Windows)
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           git clone --depth 1 https://github.com/microsoft/vcpkg.git "$env:USERPROFILE\vcpkg"
           & "$env:USERPROFILE\vcpkg\bootstrap-vcpkg.bat" -disableMetrics
           echo "VCPKG_ROOT=$env:USERPROFILE\vcpkg" >> $env:GITHUB_ENV
 
-      - name: Configure
+      - name: Configure (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cmake -B build \
+            -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           cmake -B build -A x64 `
@@ -34,10 +56,24 @@ jobs:
             -DVCPKG_TARGET_TRIPLET=x64-windows-static `
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
 
-      - name: Build
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: cmake --build build -j
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
         run: cmake --build build --config Release
 
-      - name: Package
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p dist
+          cp build/platformer dist/
+          [ -d assets ] && cp -r assets dist/ || true
+          tar -czf platformer-linux-x64.tar.gz -C dist .
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
@@ -47,5 +83,5 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: platformer-windows-x64
-          path: platformer-windows-x64.zip
+          name: platformer-${{ runner.os == 'Windows' && 'windows' || 'linux' }}-x64
+          path: ${{ runner.os == 'Windows' && 'platformer-windows-x64.zip' || 'platformer-linux-x64.tar.gz' }}

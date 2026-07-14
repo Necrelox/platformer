@@ -19,7 +19,12 @@ FetchContent_Declare(enet
   GIT_TAG        v1.3.18)
 FetchContent_MakeAvailable(enet)
 # lsalzman/enet uses old-style include_directories, so its target doesn't export the path.
-# ponytail: on Windows the `enet` target already links ws2_32/winmm via its own CMakeLists.
+# ponytail: vcpkg's raylib target doesn't propagate glfw3 in all triplets, and ENet's
+# CMakeLists links ws2_32/winmm PRIVATE (not INTERFACE) — so they never reach the consumer.
+# Link them explicitly on Windows.
+if(WIN32)
+  find_package(glfw3 CONFIG REQUIRED)
+endif()
 
 # ponytail: GLOB so parallel subsystem work just drops .cpp files under src/**/ without
 # editing this file (avoids merge races between agents). CONFIGURE_DEPENDS re-globs on build.
@@ -28,3 +33,6 @@ file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS src/*.cpp)
 add_executable(platformer ${SOURCES})
 target_include_directories(platformer PRIVATE src ${enet_SOURCE_DIR}/include)
 target_link_libraries(platformer PRIVATE raylib enet)
+if(WIN32)
+  target_link_libraries(platformer PRIVATE glfw3 ws2_32 winmm)
+endif()

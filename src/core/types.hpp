@@ -150,7 +150,7 @@ struct NetState {
 };
 
 struct World {
-    uint64_t seed = std::chrono::system_clock::now().time_since_epoch().count();
+    uint64_t seed = static_cast<uint64_t>(std::chrono::system_clock::now().time_since_epoch().count());
     TileMap  map;
     std::vector<Player>     players;
     // NET INVARIANT: the next three vectors are APPEND-ONLY and index-aligned across host &

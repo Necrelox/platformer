@@ -1,3 +1,10 @@
+// ponytail: raylib declares CloseWindow/ShowCursor as extern "C"; winuser.h (pulled in
+// transitively by enet -> winsock2 -> windows.h on Windows) redefines them with different
+// signatures -> C2733. NOUSER drops winuser.h entirely; enet only needs winsock, not winuser.
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOUSER
+#endif
 #include "core/api.hpp"
 #include <enet/enet.h>
 #include <cstring>

@@ -52,6 +52,9 @@ struct PlayerWire {
     float   invuln;
     uint8_t alive, invincible;
     float   distance;
+    int32_t score;       // coins collected (so clients show every player's score, not just the host's)
+    uint8_t dying;       // ghost death animation playing (still alive==true meanwhile)
+    float   deathTimer;
 };
 struct EnemyWire     { float px, py, vx, vy; int32_t hp; uint8_t state, facing, alive; };
 struct ItemWire      { uint8_t alive; };
@@ -61,6 +64,9 @@ struct ProjectileWire{ float px, py, vx, vy; uint8_t fromPlayer; };
 
 struct LatestSnapshot {
     bool     valid  = false;
+    bool     fresh  = false; // set true when a new snapshot is decoded; sync_client clears it
+                              // after adopting the authoritative projectile list (dead-reckoning
+                              // gate — see sync_client).
     int32_t  genCol = 0;
     std::vector<PlayerWire>     players;
     std::vector<EnemyWire>      enemies;
@@ -180,6 +186,7 @@ void decode_snapshot(const enet_uint8* data, size_t len) {
     take(gLatest.platforms,   hdr.nPlatforms);
     take(gLatest.projectiles, hdr.nProjectiles);
     gLatest.valid = true;
+    gLatest.fresh = true;
 }
 
 void handle_client_receive(Game& g, ENetPacket* pkt) {
@@ -361,7 +368,8 @@ void broadcast_snapshot(Game& g) {
         pw.facing = (p.facing == Facing::Right) ? 1 : 0;
         pw.weapon = (uint8_t)p.weapon;
         pw.invuln = p.invuln; pw.alive = p.alive; pw.invincible = p.invincible;
-        pw.distance = p.distance;
+        pw.distance = p.distance; pw.score = p.score;
+        pw.dying = p.dying; pw.deathTimer = p.deathTimer;
         append(&pw, sizeof(pw));
     }
     for (const auto& e : w.enemies) {
@@ -435,6 +443,9 @@ void sync_client(Game& g, float dt) {
         p.alive = pw.alive != 0;
         p.invincible = pw.invincible != 0;
         p.distance = pw.distance;
+        p.score = pw.score;
+        p.dying = pw.dying != 0;
+        p.deathTimer = pw.deathTimer;
     }
     for (size_t i = 0; i < w.players.size(); ++i) // keep localId valid after any reorder/resize
         if (w.players[i].id == g.net.lobby.localSlot) w.localId = (int)i;
@@ -462,22 +473,29 @@ void sync_client(Game& g, float dt) {
         pf.triggered = pfw.triggered != 0;
     }
 
-    // projectiles: full clear+refill every snapshot (no stable identity across snapshots since
-    // they're not index-aligned to generation). We still ease using whatever was at the same
-    // slot last frame as a rough previous-position proxy — cheap and looks fine since
-    // projectiles move ~monotonically; a projectile dying the same frame a new one spawns into
-    // its slot causes a one-frame visual pop.
-    // ponytail: give projectiles a host-assigned stable id if that pop becomes noticeable.
-    std::vector<Projectile> newProj(gLatest.projectiles.size());
-    for (size_t i = 0; i < gLatest.projectiles.size(); ++i) {
-        const ProjectileWire& prw = gLatest.projectiles[i];
-        Vector2 start = (i < w.projectiles.size()) ? w.projectiles[i].pos : Vector2{ prw.px, prw.py };
-        newProj[i].pos = { start.x + (prw.px - start.x) * ease, start.y + (prw.py - start.y) * ease };
-        newProj[i].vel = { prw.vx, prw.vy };
-        newProj[i].fromPlayer = prw.fromPlayer != 0;
-        newProj[i].alive = true;
+    // projectiles: dead-reckoning instead of re-easing toward a stale, index-mismatched target
+    // (they're not index-aligned to generation like enemies/items/platforms, so there's no
+    // stable per-slot identity to ease across snapshots — that's what caused the glitch/pop).
+    // On a fresh snapshot, adopt the host's authoritative list wholesale and drop the flag.
+    // On every other frame (no new snapshot yet), extrapolate the existing local list forward
+    // by pos += vel*dt so shots move smoothly between 30Hz snapshots instead of jumping.
+    if (gLatest.fresh) {
+        std::vector<Projectile> newProj(gLatest.projectiles.size());
+        for (size_t i = 0; i < gLatest.projectiles.size(); ++i) {
+            const ProjectileWire& prw = gLatest.projectiles[i];
+            newProj[i].pos = { prw.px, prw.py };
+            newProj[i].vel = { prw.vx, prw.vy };
+            newProj[i].fromPlayer = prw.fromPlayer != 0;
+            newProj[i].alive = true;
+        }
+        w.projectiles = std::move(newProj);
+        gLatest.fresh = false;
+    } else {
+        for (auto& pr : w.projectiles) {
+            pr.pos.x += pr.vel.x * dt;
+            pr.pos.y += pr.vel.y * dt;
+        }
     }
-    w.projectiles = std::move(newProj);
 }
 
 } // namespace game::net

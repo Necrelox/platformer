@@ -27,12 +27,11 @@ static void test_enemy_dies_to_gunfire() {
     e.pos = { w.players[0].pos.x + 150.f, groundTopY - e.size.y }; // in front, same ground level
     w.enemies.push_back(e);
 
-    InputState in;
-    in.fire = true;
+    w.players[0].wantFire = true; // firing intent now lives on the player (set by core::tick)
 
     float dt = 1.f / 60.f;
     for (int i = 0; i < 180 && w.enemies[0].alive; ++i)
-        combat::update(w, in, dt);
+        combat::update(w, dt);
 
     assert(!w.enemies[0].alive);
     printf("test_enemy_dies_to_gunfire: OK\n");
@@ -56,14 +55,12 @@ static void test_player_iframes() {
     e.pos = w.players[0].pos; // fully overlapping -> guaranteed contact
     w.enemies.push_back(e);
 
-    InputState in; // no firing needed for this check
-
     float dt = 1.f / 60.f;
-    combat::update(w, in, dt);
+    combat::update(w, dt);
     assert(w.players[0].hp == 2);
     assert(w.players[0].invuln > 0.f);
 
-    combat::update(w, in, dt); // immediately again: iframes must hold
+    combat::update(w, dt); // immediately again: iframes must hold
     assert(w.players[0].hp == 2);
     assert(w.players[0].alive);
 

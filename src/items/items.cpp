@@ -27,6 +27,9 @@ static void apply(Player& p, ItemType type) {
             p.invincible = true;
             p.powerTimer = INVINCIBILITY_DURATION;
             break;
+        case ItemType::Coin:
+            break; // coins removed (served no purpose) — enum kept for net append-only compat
+
     }
 }
 

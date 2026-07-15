@@ -8,7 +8,8 @@
 namespace game {
 
 // ---- core (foundation-owned) ----
-void    new_game(Game&, uint64_t seed);   // SOLO: reset world, generate start, spawn 1 player, Playing
+uint64_t random_seed();                   // time-seeded scramble: a fresh procedural map per launch
+void    new_game(Game&, uint64_t seed);   // SOLO: reset world (seed==0 -> random), spawn 1 player, Playing
 void    start_game_from_lobby(Game&);     // MP: reset world from net.lobby.seed, spawn players per slots, Playing
 void    tick(Game&, float dt);            // one fixed simulation step while Playing (host/solo)
 void    follow_camera(World&, float dt);  // lerp camera to lead player (used by client too)
@@ -33,6 +34,7 @@ namespace worldgen {
     void  reset(World&, uint64_t seed);
     void  ensure(World&, float rightEdgePx);
     float difficulty_at(float x);
+    int   zone_at(float x);   // biome id 0/1/2 (deterministic from x); render/combat read it
 }
 namespace platforms { void update(World&, float dt); }
 namespace combat    { void update(World&, float dt); }   // fires per-player from Player::wantFire
@@ -43,6 +45,7 @@ namespace ui {
     void settings(Game&);
     void lobby(Game&);       // real lobby (host/client): player list, ready, skin, host starts
     void hud(const World&);
+    void pause(Game&);       // in-game pause overlay (Resume / quit to menu)
     void gameover(Game&);
 }
 
@@ -72,7 +75,12 @@ namespace net {
 
 // ---- fx (implemented in src/fx/; foundation stubs to no-op) ----
 namespace fx {
-    enum class Event { Fire, EnemyDeath, PlayerHit, Pickup, Jump };
+    // Append-only: fx.cpp indexes its sound table by (int)Event, so new events go at the END
+    // (never reorder — it would shuffle every existing sound). Not wire-sent.
+    //   EnemyHit  — enemy took a non-fatal hit (crunch + spark)
+    //   Dash      — player dash (whoosh + streak)
+    //   Explosion — bomb / bomber death (boom + burst; combat also bumps World::shake)
+    enum class Event { Fire, EnemyDeath, PlayerHit, Pickup, Jump, PlayerDeath, EnemyHit, Dash, Explosion };
     void init_audio();                 // guarded — safe when no audio device is present
     void shutdown_audio();
     void set_volume(float v);          // 0..1 (from Settings)

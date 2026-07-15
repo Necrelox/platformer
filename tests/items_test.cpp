@@ -84,6 +84,18 @@ int main() {
         assert(w.players[0].powerTimer == 0);
     }
 
+    // --- Coin is consumed on pickup but has no effect (coins were removed) ---
+    {
+        World w;
+        Player p = make_player({ 0, 0 });
+        p.score = 10;
+        w.players.push_back(p);
+        make_item(w, { 0, 0 }, ItemType::Coin);
+        items::update(w, 0.016f);
+        assert(w.players[0].score == 10);   // unchanged: coins do nothing now
+        assert(w.items[0].alive == false);  // still consumed on contact
+    }
+
     // --- Non-overlapping item is not picked up ---
     {
         World w;

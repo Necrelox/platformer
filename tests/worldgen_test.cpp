@@ -81,6 +81,40 @@ int main() {
     worldgen::ensure(hi, 80000.0f); // diff ~0.8, pGap ~0.26 -> dense gaps
     assert(max_pit_run(hi, 0, hi.genCol) <= 5);
 
+    // ---- 5 biomes: zone_at cycles through every zone id over a long enough span ----
+    {
+        bool seen[NUM_ZONES] = {};
+        for (float x = 0.0f; x < 400000.0f; x += (float)TILE) seen[worldgen::zone_at(x)] = true;
+        for (int z = 0; z < NUM_ZONES; ++z) assert(seen[z]);
+    }
+
+    // ---- New content actually shows up over the large `hi` world: Jumper/Bomber enemies,
+    //      and T_LAVA tiles (volcanic biome). ----
+    bool sawJumper = false, sawBomber = false;
+    for (const auto& e : hi.enemies) {
+        if (e.type == EnemyType::Jumper) sawJumper = true;
+        if (e.type == EnemyType::Bomber) sawBomber = true;
+    }
+    assert(sawJumper);
+    assert(sawBomber);
+
+    // ---- Floating islands: the sky is full of them now (headline redesign) — count solid
+    //      tiles well above the floor across the large `hi` world and expect MANY. ----
+    {
+        constexpr int GROUND_Y = WORLD_H - 3;
+        int aboveFloorSolid = 0;
+        for (int tx = 0; tx < hi.genCol; ++tx)
+            for (int ty = 0; ty <= GROUND_Y - 4; ++ty)
+                if (hi.map.solid(tx, ty)) ++aboveFloorSolid;
+        assert(aboveFloorSolid > 1500); // deterministic actual ~4150 for this seed/extent — big margin
+    }
+
+    bool sawLava = false;
+    for (int tx = 0; tx < hi.genCol && !sawLava; ++tx)
+        for (int ty = 0; ty < WORLD_H; ++ty)
+            if (hi.map.at(tx, ty) == T_LAVA) { sawLava = true; break; }
+    assert(sawLava);
+
     // ---- difficulty_at: ~0 at start, smooth and monotonically increasing ----
     float prev = worldgen::difficulty_at(0.0f);
     assert(prev < 0.05f);

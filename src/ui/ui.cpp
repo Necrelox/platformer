@@ -1,5 +1,6 @@
 #include "core/api.hpp"
 #include "menu_util.hpp"
+#include "screen.hpp" // virtual_mouse(): clicks must map through the letterbox transform
 
 // Screen-space menus/HUD. May read input (raylib), unlike render::draw_world. Primitives +
 // DrawText (default font) only — no font/asset files exist.
@@ -69,7 +70,7 @@ void draw_chooser(Game& g) {
             g.net.lobby.localSlot = 0;
             g.net.lobby.slots[0].used = true;
             g.net.lobby.slots[0].skin = 0;
-            g.net.lobby.seed = 1;
+            g.net.lobby.seed = random_seed(); // fresh procedural map each host session
             lobbyView = LobbyView::Room;
         } else {
             TextCopy(lobbyErr, "Echec: impossible d'heberger (port deja utilise ?)");
@@ -87,9 +88,10 @@ void draw_join_input(Game& g) {
     if (IsKeyPressed(KEY_BACKSPACE)) ip_edit(g.net.joinIp, (int)sizeof(g.net.joinIp), 0, true);
 
     DrawText(TextFormat("IP: %s", g.net.joinIp), 120, 220, 32, YELLOW);
-    DrawText(TextFormat("Port: %d", g.net.port), 120, 260, 24, GRAY);
-    if (lobbyErr[0]) DrawText(lobbyErr, 120, 320, 22, RED);
-    DrawText("ENTREE : rejoindre   ESC : retour au menu", 120, 400, 22, GRAY);
+    DrawText("Chiffres et points uniquement, ex: 192.168.1.10", 120, 256, 18, DARKGRAY);
+    DrawText(TextFormat("Port: %d", g.net.port), 120, 290, 24, GRAY);
+    if (lobbyErr[0]) DrawText(lobbyErr, 120, 340, 22, RED);
+    DrawText("ENTREE : rejoindre   ESC : retour", 120, 400, 22, GRAY);
 
     if (!(IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER))) return;
     lobbyErr[0] = 0;
@@ -168,11 +170,9 @@ void menu(Game& g) {
         DrawText(MENU_LABELS[i], 120, MENU_TOP + i * MENU_STEP, 32, c);
         if (i == sel) DrawText(">", 90, MENU_TOP + i * MENU_STEP, 32, YELLOW);
     }
-    DrawText("ESC : quitter le jeu", 120, MENU_TOP + MENU_COUNT * MENU_STEP + 20, 20, DARKGRAY);
-
     bool chosen = IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER);
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) { // optional mouse: click a label to pick it
-        Vector2 m = GetMousePosition();
+        Vector2 m = virtual_mouse();
         for (int i = 0; i < MENU_COUNT; ++i) {
             Rectangle r{ 90, (float)(MENU_TOP + i * MENU_STEP) - 4, 320, 40 };
             if (CheckCollisionPointRec(m, r)) { sel = i; chosen = true; break; }
@@ -180,7 +180,7 @@ void menu(Game& g) {
     }
     if (!chosen) return;
     switch (sel) {
-        case 0: new_game(g, 1); break;
+        case 0: new_game(g, 0); break; // seed 0 -> new_game rolls a random seed (fresh map each run)
         case 1: // "Multijoueur": always enter fresh at the host/join chooser
             lobbyView  = LobbyView::Chooser;
             chooserSel = 0;
@@ -188,7 +188,7 @@ void menu(Game& g) {
             g.mode = Mode::Lobby;
             break;
         case 2: g.mode = Mode::Settings; break;
-        case 3: break; // "Quitter": ESC (raylib's default exit key) closes the window
+        case 3: g.wantQuit = true; break; // main's loop exits on wantQuit (ESC no longer quits)
     }
 }
 
@@ -217,14 +217,23 @@ void settings(Game& g) {
 }
 
 void lobby(Game& g) {
-    // ESC anywhere in the lobby flow tears the net session down (harmless no-op if none was
-    // ever started yet) and drops back to the main menu.
+    // ESC steps back ONE level of the lobby flow instead of always dropping to the menu.
     if (IsKeyPressed(KEY_ESCAPE)) {
-        net::shutdown();
-        g.net = NetState{};
-        lobbyView   = LobbyView::Chooser;
+        switch (lobbyView) {
+            case LobbyView::Room: // leave the session and go all the way back to the menu
+                net::shutdown();
+                g.net = NetState{};
+                lobbyView = LobbyView::Chooser;
+                g.mode = Mode::Menu;
+                break;
+            case LobbyView::JoinInput: // no session yet: just back out of the IP entry
+                lobbyView = LobbyView::Chooser;
+                break;
+            case LobbyView::Chooser:
+                g.mode = Mode::Menu;
+                break;
+        }
         lobbyErr[0] = 0;
-        g.mode = Mode::Menu;
         return;
     }
     switch (lobbyView) {
@@ -238,6 +247,12 @@ void hud(const World& w) {
     if (w.players.empty()) return;
     const Player& p = w.players[w.localId];
 
+    // ponytail: these mirror core/game.cpp's mobility knobs (not exported via api.hpp) — HUD-only,
+    // keep in sync if the gameplay values change. Only used to draw the readiness meters.
+    constexpr float DASH_CD_HUD    = 0.7f; // == DASH_CD in game.cpp
+    constexpr int   MAX_AIR_JUMPS  = 1;    // == MAX_AIR_JUMPS in game.cpp
+
+    // ---- hearts ----
     for (int i = 0; i < p.maxHp; ++i) {
         Rectangle r{ (float)(20 + i * 34), 20, 28, 28 };
         DrawRectangleRec(r, (i < p.hp) ? RED : Color{ 70, 70, 70, 255 });
@@ -245,16 +260,71 @@ void hud(const World& w) {
     }
     DrawText(TextFormat("Arme: %s", weapon_name(p.weapon)), 20, 56, 22, RAYWHITE);
     DrawText(TextFormat("Distance: %.0f", p.distance), 20, 84, 22, RAYWHITE);
-    if (p.invincible)
-        DrawText(TextFormat("INVINCIBLE %.1fs", p.powerTimer), 20, 112, 22, GOLD);
 
-    if (w.players.size() > 1) { // multiplayer: small skin marker per teammate (render owns
-        int x = 20;             // the actual on-world player color; this is just a HUD roster)
+    // ---- dash cooldown meter (full + cyan = ready) ----
+    float dashReady = (p.dashCd <= 0.f) ? 1.0f : 1.0f - p.dashCd / DASH_CD_HUD;
+    if (dashReady < 0.f) dashReady = 0.f;
+    bool dashUp = dashReady >= 1.0f;
+    Rectangle dbg{ 20, 116, 120, 14 };
+    DrawRectangleRec(dbg, Color{ 45, 45, 55, 255 });
+    DrawRectangle(20, 116, (int)(120 * dashReady), 14, dashUp ? Color{ 90, 200, 255, 255 } : Color{ 70, 120, 150, 255 });
+    DrawRectangleLinesEx(dbg, 1, BLACK);
+    DrawText("DASH", 146, 116, 14, dashUp ? SKYBLUE : GRAY);
+
+    // ---- double-jump pip (lit = a mid-air jump is available) ----
+    bool djReady = p.airJumps < MAX_AIR_JUMPS;
+    DrawCircleV({ 28, 145 }, 7, djReady ? Color{ 90, 220, 120, 255 } : Color{ 60, 60, 60, 255 });
+    DrawCircleLines(28, 145, 7, BLACK);
+    DrawText("2x SAUT", 42, 138, 14, djReady ? GREEN : GRAY);
+
+    if (p.invincible)
+        DrawText(TextFormat("INVINCIBLE %.1fs", p.powerTimer), 20, 164, 22, GOLD);
+
+    if (w.players.size() > 1) { // multiplayer: skin marker per teammate (score removed with coins)
+        int x = 20, y = 190;
         for (size_t i = 0; i < w.players.size(); ++i) {
-            if (i == (size_t)w.localId) DrawRectangleLines(x - 2, 138, 24, 24, WHITE);
-            DrawRectangle(x, 140, 20, 20, w.players[i].color);
-            x += 28;
+            if (i == (size_t)w.localId) DrawRectangleLines(x - 2, y - 2, 24, 24, WHITE);
+            DrawRectangle(x, y, 20, 20, w.players[i].color);
+            x += 30;
         }
+    }
+}
+
+void pause(Game& g) {
+    // ponytail: reuses menu()'s static-sel + nav-delta + mouse-click pattern. ESC is NOT read
+    // here — main.cpp owns the Playing<->Paused toggle and flips modes itself on ESC.
+    static int sel = 0;
+    constexpr int PAUSE_COUNT = 2;
+    const char* const PAUSE_LABELS[PAUSE_COUNT] = { "Reprendre", "Quitter vers le menu" };
+    constexpr int PAUSE_TOP = 320;
+    sel = wrap_index(sel, menu_nav_delta(), PAUSE_COUNT);
+
+    DrawRectangle(0, 0, SCREEN_W, SCREEN_H, Color{ 0, 0, 0, 160 }); // dim the frozen game behind
+    DrawText("PAUSE", 100, 180, 56, RAYWHITE);
+    for (int i = 0; i < PAUSE_COUNT; ++i) {
+        Color c = (i == sel) ? YELLOW : GRAY;
+        DrawText(PAUSE_LABELS[i], 120, PAUSE_TOP + i * MENU_STEP, 32, c);
+        if (i == sel) DrawText(">", 90, PAUSE_TOP + i * MENU_STEP, 32, YELLOW);
+    }
+
+    bool chosen = IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER);
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) { // optional mouse: click a label to pick it
+        Vector2 m = virtual_mouse();
+        for (int i = 0; i < PAUSE_COUNT; ++i) {
+            Rectangle r{ 90, (float)(PAUSE_TOP + i * MENU_STEP) - 4, 380, 40 };
+            if (CheckCollisionPointRec(m, r)) { sel = i; chosen = true; break; }
+        }
+    }
+    if (!chosen) return;
+    switch (sel) {
+        case 0: g.mode = Mode::Playing; break;
+        case 1: // "Quitter vers le menu"
+            if (g.net.role != NetRole::Solo) {
+                net::shutdown();
+                g.net = NetState{};
+            }
+            g.mode = Mode::Menu;
+            break;
     }
 }
 
